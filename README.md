@@ -1,7 +1,8 @@
 # testing
 where to dump anything that might be useful
 
-dan_playingaround - 
+dan_playingaround:
+
   top part is me looking at all available envs on openai gym, 
   and setting up a little interactive cell to render an environment of my choosing
   
