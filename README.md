@@ -15,4 +15,8 @@ where to dump anything that might be useful
 		
 		Just learning this very basics of OpenAI..
 		
+	jm_random_search_cartpole:
+		
+		Trying to implement random search on weights for cartpole problem
+		
 		
