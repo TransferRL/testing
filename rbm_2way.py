@@ -54,8 +54,8 @@ class RBM(object):
         h_start = self.propup(visibles)
         v_end = self.propdown(h_start)
         h_end = self.propup(v_end)
-        w_positive_grad = tf.matmul(tf.transpose(visibles), h_start)
-        w_negative_grad = tf.matmul(tf.transpose(v_end), h_end)
+        w_positive_grad = tf.matmul(tf.transpose(visibles), h_start) / visibles.shape[0]
+        w_negative_grad = tf.matmul(tf.transpose(v_end), h_end) / visibles.shape[0]
 
         update_w = self.weights.assign_add(learning_rate * (w_positive_grad - w_negative_grad))
 
