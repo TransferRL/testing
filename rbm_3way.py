@@ -91,30 +91,30 @@ class RBM(object):
         
         return v1,h,v2
 
-    def pcd_k(self, start_v1, start_v2, learning_rate=0.1, k=1, persistant=False):
+    def pcd_k(self, start_v1, start_v2, learning_rate=0.1, k=1, persistent=False):
         "k-step (persistent) contrastive divergence"
         
         n_samples = len(start_v1)
         
-        if self.chain_v1 is None and persistant == True:
+        if self.chain_v1 is None and persistent == True:
             self.chain_v1 = start_v1
-        if self.chain_v2 is None and persistant == True:
+        if self.chain_v2 is None and persistent == True:
             self.chain_v2 = start_v2
-        if self.chain_h is None and persistant == True:
+        if self.chain_h is None and persistent == True:
             self.chain_h = self.prop_v1v2_h(self.chain_v1, self.chain_v2, n_samples)
         
-        if persistant == True: mcmc_v1 = self.chain_v1
+        if persistent == True: mcmc_v1 = self.chain_v1
         else: mcmc_v1 = start_v1
-        if persistant == True: mcmc_v2 = self.chain_v2
+        if persistent == True: mcmc_v2 = self.chain_v2
         else: mcmc_v2 = start_v2
-        if persistant == True: start_h = self.chain_h
+        if persistent == True: start_h = self.chain_h
         else: start_h = self.prop_v1v2_h(start_v1, start_v2, n_samples)
         mcmc_h = start_h
         
         for n in range(k):
             mcmc_v1, mcmc_h, mcmc_v2 = self.gibbs(mcmc_v1, mcmc_h, mcmc_v2, n_samples)
             
-        if persistant == True:
+        if persistent == True:
             self.chain_v1, self.chain_h, self.chain_v2 = mcmc_v1, mcmc_h, mcmc_v2
         
         w_positive_grad = self.get_delta_products(start_v1,start_h,start_v2)
