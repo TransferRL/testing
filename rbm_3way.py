@@ -103,12 +103,15 @@ class RBM(object):
         else: mcmc_v1 = start_v1
         if persistant == True: mcmc_v2 = self.chain_v2
         else: mcmc_v2 = start_v2
-        if persistant == True: mcmc_h = self.chain_h
-        else: mcmc_h = self.prop_v1v2_h(start_v1, start_v2)
-        start_h = mcmc_h.copy()
+        if persistant == True: start_h = self.chain_h
+        else: start_h = self.prop_v1v2_h(start_v1, start_v2)
+        mcmc_h = start_h.copy()
         
         for n in range(k):
-            self.chain_v1, self.chain_h, self.chain_v2 = gibbs(self.chain_v1, self.chain_h, self.chain_v2)
+            mcmc_v1, mcmc_h, mcmc_v2 = gibbs(mcmc_v1, mcmc_h, mcmc_v2)
+            
+        if persistant == True:
+            self.chain_v1, self.chain_h, self.chain_v2 = mcmc_v1, mcmc_h, mcmc_v2
         
         w_positive_grad = self.get_delta_products(start_v1,start_h,start_v2)
         w_negative_grad = self.get_delta_products(self.chain_v1,self.chain_h,self.chain_v2)
