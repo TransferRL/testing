@@ -31,27 +31,26 @@ class RBM(object):
             self.chain_v1 = None
             self.chain_v2 = None
                   
- 
-    def _prop_helper(self, v1, v2, perm):
-    def _prop_helper(self, v1, v2, perm):
+    def _prop_helper(self, a, b, perm):
         """ perm specifies matrix orientation"""
-        wt = tf.transpose(self.weights, perm=perm)
-        wtv = tf.matmul(wt, v1)
-        wtvs = tf.reduce_sum(wtv, axis=2)
-        wtvsv = tf.matmul(wtvs, v2)
-        return wtvsv
+        wt = tf.transpose(w,perm=perm)
+        wtv = tf.matmul(wt,tf.transpose(a))
+        wtvt = tf.transpose(wtv,perm=[2,0,1])
+        wtvtv = tf.matmul(wtvt,tf.expand_dims(b,axis=-1))
+        wtvtvs = tf.reduce_sum(wtvtv,axis=-1)
+        return wtvtvs
                   
     def prop_v1v2_h(self, v1, v2):
         """ P(h|v1,v2) """
-        return tf.nn.sigmoid(self._prop_helper(v1, v2, [1, 2, 0]) + self.h_bias)
+        return tf.nn.sigmoid(self._prop_helper(v1, v2, [1, 2, 0]) + tf.tile(self.h_bias,(v1.shape.as_list()[0],1)))
     
     def prop_v1h_v2(self, v1, h):
         """ P(h|v1,v2) """
-        return self._prop_helper(v1, h, [2, 1, 0]) + self.v2_bias
+        return self._prop_helper(v1, h, [2, 1, 0]) + tf.tile(self.v2_bias,(v1.shape.as_list()[0],1))
     
     def prop_v2h_v1(self, v2, h):
         """ P(h|v1,v2) """
-        return self._prop_helper(v2, h, [0, 1, 2]) + self.v1_bias
+        return self._prop_helper(v2, h, [0, 1, 2]) + tf.tile(self.v1_bias,(v2.shape.as_list()[0],1))
     
     def sample_v1_given_v2h(self, v2, h):
         """ generate sample of v1 from v2 and h"""
