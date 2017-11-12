@@ -5,6 +5,7 @@ import math
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import itertools
 
 
 def sample_prob(probs):
@@ -36,7 +37,7 @@ class RBM(object):
     """ represents a 3-way rbm """
 
     def __init__(self, name, v1_size, h_size, v2_size, n_data, batch_size, num_epochs=100, learning_rate=0.1, k=1,
-                 persistent=False, use_tqdm=True, show_err_plt=True,n_factors=10):
+                 use_tqdm=True, show_err_plt=True,n_factors=50):
         with tf.name_scope("rbm_" + name):
             self.v1_size = v1_size
             self.v2_size = v2_size
@@ -59,14 +60,9 @@ class RBM(object):
             self.batch_size = batch_size
             self.n_batches = n_data // batch_size # assume it will be an integer
 
-            self.chain_h = None
-            self.chain_v1 = None
-            self.chain_v2 = None
-
             self.num_epochs = num_epochs
             self.learning_rate = learning_rate
             self.k = k
-            self.persistent = persistent
 
             self.use_tqdm = use_tqdm
             self.show_err_plt = show_err_plt
@@ -76,6 +72,10 @@ class RBM(object):
 
             self.compute_err = None  # filled in reconstruction error
             self.tf_session = None
+            
+            self.cost = []
+
+            self.final_h = None
 
     def _prop_helper(self, a, b, a_weights, b_weights, t_weights):
         """a and b should be matricies of row vectors"""
@@ -138,69 +138,66 @@ class RBM(object):
         self.pcd_k()  # define pcd step
         self.reconstruction_error()  # define error metric
 
-        v1_input_list = np.split(v1_input, self.n_batches)
-        v2_input_list = np.split(v2_input, self.n_batches)
-        with tf.Session() as self.tf_session:
-            init = tf.global_variables_initializer()
-            self.tf_session.run(init)
+        self.tf_session = tf.Session()
+        init = tf.global_variables_initializer()
+        self.tf_session.run(init)
 
-            pbar = tqdm(range(self.num_epochs))
-            errs = np.zeros(self.num_epochs)
-            for i in pbar:
-                err = 0
-                self.one_train_step(v1_input_list, v2_input_list)
-                    # err += self.get_cost(v1_input_b, v2_input_b)
-                # avg_err = err / self.n_batches
-                # pbar.set_description('squared reconstruction average batch error: {}'.format(avg_err))
-                # errs[i] = avg_err
-        # if self.show_err_plt:
-        #     plt.plot(range(self.num_epochs), errs)
-        #     plt.show()
-        # return errs
+        pbar = tqdm(range(self.num_epochs))
+        for i in pbar:
+            avg_err = self.one_train_step(v1_input, v2_input)
+            self.cost.append(avg_err)
+            pbar.set_description('squared reconstruction average batch error: {}'.format(avg_err))
 
-    def one_train_step(self, v1_input_list, v2_input_list):
+            # catch divergence
+            if np.isnan(self.cost[-1]) == True:
+                raise RuntimeError('Training has diverged - lower learning rate!')
+            # early stopping
+            if i > 20 and np.mean(self.cost[-20:-10]) - np.mean(self.cost[-10:]) < np.mean(self.cost[-20:]) * 0.01:
+                break
+
+        return self.cost
+
+    def one_train_step(self, v1_input, v2_input):
         """run one training step"""
 
-        # TODO: implement batches
-
         updates = [self.fweights_v1, self.fweights_v2, self.fweights_h, self.v1_bias, self.v2_bias, self.h_bias]
+        err_tot = 0
         for i in range(self.n_batches):
+            np.random.shuffle(v1_input)
+            np.random.shuffle(v2_input)
+            v1_input_list = np.split(v1_input, self.n_batches)
+            v2_input_list = np.split(v2_input, self.n_batches)
+
             self.tf_session.run(updates, feed_dict={self.v1_input: v1_input_list[i], self.v2_input: v2_input_list[i]})
+            err_tot += self.get_cost(v1_input_list[i],v2_input_list[i])
+        return err_tot / (self.batch_size * self.n_batches)
 
     def pcd_k(self):
         "k-step (persistent) contrastive divergence"
 
-        if self.chain_v1 is None and self.persistent:
-            self.chain_v1 = self.v1_input
-        if self.chain_v2 is None and self.persistent:
-            self.chain_v2 = self.v2_input
-        if self.chain_h is None and self.persistent:
-            self.chain_h = self.prop_v1v2_h(self.chain_v1, self.chain_v2)
+        mcmc_v1, mcmc_v2 = (self.v1_input, self.v2_input)
 
-        mcmc_v1, mcmc_v2 = (self.chain_v1, self.chain_v2) if self.persistent else (self.v1_input, self.v2_input)
-
-        start_h = self.chain_h if self.persistent else self.prop_v1v2_h(self.v1_input, self.v2_input)
+        start_h = self.prop_v1v2_h(self.v1_input, self.v2_input)
         mcmc_h = start_h
 
         for n in range(self.k):
             mcmc_v1, mcmc_h, mcmc_v2 = self.gibbs(mcmc_v1, mcmc_h, mcmc_v2)
 
-        if self.persistent:
-            self.chain_v1, self.chain_h, self.chain_v2 = mcmc_v1, mcmc_h, mcmc_v2
+        self.final_h = mcmc_h
 
         # update fweights_v1
-        fw_v1_positive_grad = self.get_delta_products(tf.divide(self.v1_input,self.v1_var), start_h, tf.divide(self.v2_input,self.v2_var),self.fweights_h,self.fweights_v2)
-        fw_v1_negative_grad = self.get_delta_products(tf.divide(mcmc_v1,self.v1_var), mcmc_h, tf.divide(mcmc_v2,self.v2_var),self.fweights_h,self.fweights_v2)
+        fw_v1_positive_grad = self.get_delta_products(tf.divide(self.v1_input,self.v1_var), start_h, tf.divide(self.v2_input,self.v2_var),self.fweights_h,self.fweights_v2) / self.batch_size
+        fw_v1_negative_grad = self.get_delta_products(tf.divide(mcmc_v1,self.v1_var), mcmc_h, tf.divide(mcmc_v2,self.v2_var),self.fweights_h,self.fweights_v2) / self.batch_size
         self.fweights_v1 = self.fweights_v1.assign_add(self.learning_rate * (fw_v1_positive_grad - fw_v1_negative_grad))
-        
+
         # update fweights_v2
-        fw_v2_positive_grad = self.get_delta_products(tf.divide(self.v2_input,self.v2_var), start_h, tf.divide(self.v1_input,self.v1_var),self.fweights_h,self.fweights_v1)
-        fw_v2_negative_grad = self.get_delta_products(tf.divide(mcmc_v2,self.v2_var), mcmc_h, tf.divide(mcmc_v1,self.v1_var),self.fweights_h,self.fweights_v1)
+        fw_v2_positive_grad = self.get_delta_products(tf.divide(self.v2_input,self.v2_var), start_h, tf.divide(self.v1_input,self.v1_var),self.fweights_h,self.fweights_v1) / self.batch_size
+        fw_v2_negative_grad = self.get_delta_products(tf.divide(mcmc_v2,self.v2_var), mcmc_h, tf.divide(mcmc_v1,self.v1_var),self.fweights_h,self.fweights_v1) / self.batch_size
         self.fweights_v2 = self.fweights_v2.assign_add(self.learning_rate * (fw_v2_positive_grad - fw_v2_negative_grad))
-        
+
         # update fweights_h
-        fw_h_positive_grad = self.get_delta_products(start_h, tf.divide(self.v2_input,self.v2_var), tf.divide(self.v1_input,self.v1_var),self.fweights_v2,self.fweights_v1)
-        fw_h_negative_grad = self.get_delta_products(mcmc_h, tf.divide(mcmc_v2,self.v2_var), tf.divide(mcmc_v1,self.v1_var),self.fweights_v2,self.fweights_v1)
+        fw_h_positive_grad = self.get_delta_products(start_h, tf.divide(self.v2_input,self.v2_var), tf.divide(self.v1_input,self.v1_var),self.fweights_v2,self.fweights_v1) / self.batch_size
+        fw_h_negative_grad = self.get_delta_products(mcmc_h, tf.divide(mcmc_v2,self.v2_var), tf.divide(mcmc_v1,self.v1_var),self.fweights_v2,self.fweights_v1) / self.batch_size
         self.fweights_h = self.fweights_h.assign_add(self.learning_rate * (fw_h_positive_grad - fw_h_negative_grad))
 
         self.v1_bias = self.v1_bias.assign_add(self.learning_rate * tf.reduce_mean(self.v1_input - mcmc_v1, 0,
@@ -209,6 +206,7 @@ class RBM(object):
                                                                                    keep_dims=True))
 
         self.h_bias = self.h_bias.assign_add(self.learning_rate * tf.reduce_mean(start_h - mcmc_h, 0, keep_dims=True))
+
 
     def get_cost(self, v1_input, v2_input):
 
@@ -227,13 +225,25 @@ class RBM(object):
 
         self.compute_err = v1_err + v2_err
 
+    def v2_predict(self,v1_input):
 
-if __name__ == '__main__':
+        # mean field
+        #v2_predictions = self.prop_v1h_v2(v1_inputs, self.h)
+        # sample
+        v1_input_list = np.split(v1_input, self.n_batches)
+        v2_predictions = []
+        for i in range(self.n_batches):
+            v2_prediction = self.sample_v2_given_v1h(self.v1_input, self.final_h)
+            v2_predictions.append(self.tf_session.run(v2_prediction,feed_dict={self.v1_input: v1_input_list[i], self.v2_input: np.zeros([self.batch_size,self.v2_size])}))
+        return np.stack(v2_predictions).reshape(-1,self.v2_size)
 
-    n_v1 = 10
-    n_v2 = 12
-    n_h = 12
-    n_samples = 50
+
+def main():
+
+    n_v1 = 30
+    n_v2 = 30
+    n_h = 60
+    n_samples = 5000
 
     v1s = []
     v2s = []
@@ -248,9 +258,27 @@ if __name__ == '__main__':
         v2s.append(v2)
 
     v1s = np.stack(v1s)
-    v2s = np.stack(v2s)
+    v2s = np.stack(v1s)
 
-    rbm = RBM(name='rbm', v1_size=n_v1, h_size=n_h, v2_size=n_v2, n_data = n_samples, batch_size=10, learning_rate=0.01,
-              num_epochs=500)
+    print(v1s.shape[0])
+
+    rbm = RBM(name='rbm', v1_size=n_v1, h_size=n_h, v2_size=n_v2
+              , n_data = v1s.shape[0], batch_size=100, learning_rate=0.0000001,
+              num_epochs=500, n_factors=10)
     errs = rbm.train(v1s, v2s)
-    print(errs)
+    print('getting predictions')
+    print('v2s:', v2s[:3])
+    v2_predictions = rbm.v2_predict(v1s)
+    print('v2 preds:', v2_predictions[:3])
+
+    print('preds diff:',(v2_predictions - v2s).mean(axis=0))
+
+    rbm.tf_session.close()
+
+
+    if rbm.show_err_plt:
+        plt.plot(range(len(rbm.cost)), rbm.cost)
+        plt.show()
+
+if __name__ == '__main__':
+    main()
